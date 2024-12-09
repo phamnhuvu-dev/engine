@@ -4,6 +4,8 @@
 
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews_Internal.h"
 
+#import <WebKit/WebKit.h>
+
 #include "flutter/display_list/effects/dl_image_filter.h"
 #include "flutter/fml/platform/darwin/cf_utils.h"
 #import "flutter/shell/platform/darwin/ios/ios_surface.h"
@@ -509,6 +511,120 @@ static BOOL _preparedOnce = NO;
   [_pool release];
 
   [super dealloc];
+}
+
+@implementation UIView (FirstResponder)
+- (BOOL)flt_hasFirstResponderInViewHierarchySubtree {
+  if (self.isFirstResponder) {
+    return YES;
+  }
+  for (UIView* subview in self.subviews) {
+    if (subview.flt_hasFirstResponderInViewHierarchySubtree) {
+      return YES;
+    }
+  }
+  return NO;
+}
+@end
+
+@interface FlutterTouchInterceptingView ()
+@property(nonatomic, weak, readonly) UIView* embeddedView;
+@property(nonatomic, readonly) FlutterDelayingGestureRecognizer* delayingRecognizer;
+@property(nonatomic, readonly) FlutterPlatformViewGestureRecognizersBlockingPolicy blockingPolicy;
+@end
+
+@implementation FlutterTouchInterceptingView
+- (instancetype)initWithEmbeddedView:(UIView*)embeddedView
+             platformViewsController:
+                 (fml::WeakPtr<flutter::PlatformViewsController>)platformViewsController
+    gestureRecognizersBlockingPolicy:
+        (FlutterPlatformViewGestureRecognizersBlockingPolicy)blockingPolicy {
+  self = [super initWithFrame:embeddedView.frame];
+  if (self) {
+    self.multipleTouchEnabled = YES;
+    _embeddedView = embeddedView;
+    embeddedView.autoresizingMask =
+        (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
+
+    [self addSubview:embeddedView];
+
+    ForwardingGestureRecognizer* forwardingRecognizer =
+        [[ForwardingGestureRecognizer alloc] initWithTarget:self
+                                    platformViewsController:platformViewsController];
+
+    _delayingRecognizer =
+        [[FlutterDelayingGestureRecognizer alloc] initWithTarget:self
+                                                          action:nil
+                                            forwardingRecognizer:forwardingRecognizer];
+    _blockingPolicy = blockingPolicy;
+
+    [self addGestureRecognizer:_delayingRecognizer];
+    [self addGestureRecognizer:forwardingRecognizer];
+  }
+  return self;
+}
+
+- (void)releaseGesture {
+  self.delayingRecognizer.state = UIGestureRecognizerStateFailed;
+}
+
+- (void)blockGesture {
+  switch (_blockingPolicy) {
+    case FlutterPlatformViewGestureRecognizersBlockingPolicyEager:
+      // We block all other gesture recognizers immediately in this policy.
+      self.delayingRecognizer.state = UIGestureRecognizerStateEnded;
+
+      // On iOS 18.2, WKWebView's internal recognizer likely caches the old state of its blocking
+      // recognizers (i.e. delaying recognizer), resulting in non-tappable links. See
+      // https://github.com/flutter/flutter/issues/158961. Removing and adding back the delaying
+      // recognizer solves the problem, possibly because UIKit notifies all the recognizers related
+      // to (blocking or blocked by) this recognizer. It is not possible to inject this workaround
+      // from the web view plugin level. Right now we only observe this issue for
+      // FlutterPlatformViewGestureRecognizersBlockingPolicyEager, but we should try it if a similar
+      // issue arises for the other policy.
+      if (@available(iOS 18.2, *)) {
+        if ([self.embeddedView isKindOfClass:[WKWebView class]]) {
+          [self removeGestureRecognizer:self.delayingRecognizer];
+          [self addGestureRecognizer:self.delayingRecognizer];
+        }
+      }
+
+      break;
+    case FlutterPlatformViewGestureRecognizersBlockingPolicyWaitUntilTouchesEnded:
+      if (self.delayingRecognizer.touchedEndedWithoutBlocking) {
+        // If touchesEnded of the `DelayingGesureRecognizer` has been already invoked,
+        // we want to set the state of the `DelayingGesureRecognizer` to
+        // `UIGestureRecognizerStateEnded` as soon as possible.
+        self.delayingRecognizer.state = UIGestureRecognizerStateEnded;
+      } else {
+        // If touchesEnded of the `DelayingGesureRecognizer` has not been invoked,
+        // We will set a flag to notify the `DelayingGesureRecognizer` to set the state to
+        // `UIGestureRecognizerStateEnded` when touchesEnded is called.
+        self.delayingRecognizer.shouldEndInNextTouchesEnded = YES;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+// We want the intercepting view to consume the touches and not pass the touches up to the parent
+// view. Make the touch event method not call super will not pass the touches up to the parent view.
+// Hence we overide the touch event methods and do nothing.
+- (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+}
+
+- (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+}
+
+- (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+}
+
+- (void)touchesEnded:(NSSet*)touches withEvent:(UIEvent*)event {
+}
+
+- (id)accessibilityContainer {
+  return self.flutterAccessibilityContainer;
 }
 
 @end
