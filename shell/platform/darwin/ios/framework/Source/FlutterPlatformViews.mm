@@ -18,6 +18,7 @@
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h"
 #import "flutter/shell/platform/darwin/ios/ios_surface.h"
+#import <WebKit/WebKit.h>
 
 @implementation UIView (FirstResponder)
 - (BOOL)flt_hasFirstResponderInViewHierarchySubtree {
@@ -1037,6 +1038,12 @@ void FlutterPlatformViewsController::ResetFrameState() {
     case FlutterPlatformViewGestureRecognizersBlockingPolicyEager:
       // We block all other gesture recognizers immediately in this policy.
       _delayingRecognizer.get().state = UIGestureRecognizerStateEnded;
+      if (@available(iOS 18.2, *)) {
+        if ([_embeddedView isKindOfClass:[WKWebView class]]) {
+          [self removeGestureRecognizer:_delayingRecognizer];
+          [self addGestureRecognizer:_delayingRecognizer];
+        }
+      }
       break;
     case FlutterPlatformViewGestureRecognizersBlockingPolicyWaitUntilTouchesEnded:
       if (_delayingRecognizer.get().touchedEndedWithoutBlocking) {

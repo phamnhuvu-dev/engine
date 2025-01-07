@@ -67,6 +67,7 @@ source_set("flutter_framework_source_arc") {
   ]
 
   frameworks = [
+    "WebKit.framework",
     "UIKit.framework",
     "IOSurface.framework",
   ]
