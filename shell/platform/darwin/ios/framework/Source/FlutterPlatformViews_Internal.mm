@@ -512,6 +512,7 @@ static BOOL _preparedOnce = NO;
 
   [super dealloc];
 }
+@end
 
 @implementation UIView (FirstResponder)
 - (BOOL)flt_hasFirstResponderInViewHierarchySubtree {
